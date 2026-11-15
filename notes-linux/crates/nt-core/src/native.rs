@@ -300,10 +300,16 @@ pub(crate) fn reconcile(store: &mut Store) -> Result<Refresh> {
             native.export(store, id, key)?;
             rep.written += 1;
         }
-        // notes erased in the index while their files stayed: tombstones
+        // notes erased in the index while their files stayed: tombstones, but only for a note
+        // deleted for good here; a note the index merely lost is read again from its file
+        let erased = store.erased_ids();
         for id in native.manifest.notes.iter().filter(|(id, v)| v.2 != "deleted" && !keys.contains_key(*id)).map(|(id, _)| id.clone()).collect::<Vec<_>>() {
-            native.tombstone(&id)?;
-            rep.written += 1;
+            if erased.contains(&id) {
+                native.tombstone(&id)?;
+                rep.written += 1;
+            } else {
+                native.manifest.notes.remove(&id);
+            }
         }
         if rep.written > 0 || rep.folders || !is_native(&root) {
             native.write_library(store)?;

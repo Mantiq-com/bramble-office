@@ -1503,8 +1503,31 @@ impl Store {
         r
     }
 
+    /// The notes deleted for good here (emptied from Recently Deleted, or a deletion from
+    /// another device carried out): `erased.json` in the index folder. Sync and the library files
+    /// only ever delete a note everywhere when it's listed here, so a note merely missing (an
+    /// incomplete server listing, an index that lost a row) is never deleted.
+    pub fn erased_ids(&self) -> HashSet<String> {
+        std::fs::read(self.dir.join("erased.json")).ok().and_then(|b| serde_json::from_slice::<Vec<String>>(&b).ok()).map(|v| v.into_iter().collect()).unwrap_or_default()
+    }
+
+    fn record_erased(&self, id: &str) {
+        let mut ids: Vec<String> = self.erased_ids().into_iter().collect();
+        if ids.iter().any(|i| i == id) {
+            return;
+        }
+        ids.push(id.to_string());
+        ids.sort();
+        let path = self.dir.join("erased.json");
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, serde_json::to_vec(&ids).unwrap_or_default()).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        }
+    }
+
     /// Delete for good: the note, its body, attachments, inline tokens and media files.
     pub fn erase_note(&mut self, id: &str) -> Result<()> {
+        self.record_erased(id);
         let r = (|| -> Result<()> {
             let _slow = Slow::new("erase_note");
             let tx = self.conn.unchecked_transaction()?;

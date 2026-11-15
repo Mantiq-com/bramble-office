@@ -1459,6 +1459,8 @@ fn sync(store: &mut Store, s: &Settings, force: Force, progress: &Reporter) -> R
     let mut incoming: Vec<Note> = Vec::new();
     let mut erase: Vec<String> = Vec::new();
     let mut jobs: Vec<Job> = Vec::new();
+    // the notes deleted for good here: the only ones whose absence sends a tombstone
+    let erased_here = store.erased_ids();
     let job_of = |id: &str, key: &str, n: &Note, j: Value, files: Files, hash: String| Job::Note { id: id.to_string(), key: key.to_string(), j, files, hash, title: n.title.clone() };
     for id in ids {
         let known = state.notes.get(&id).cloned();
@@ -1568,13 +1570,8 @@ fn sync(store: &mut Store, s: &Settings, force: Force, progress: &Reporter) -> R
         }
         if theirs.is_none() {
             if let Some(k) = &known {
-                // gone from the server (deleted on another device)
-                if here.is_some() && !mine_changed && !k.2.is_empty() {
-                    erase.push(id.clone());
-                    state.notes.remove(&id);
-                    rep.removed += 1;
-                    continue;
-                }
+                // gone from the server: never a deletion (other devices delete with a
+                // tombstone), more likely an incomplete listing; the note is kept and sent again
                 if here.is_none() {
                     state.notes.remove(&id);
                     continue;
@@ -1584,8 +1581,13 @@ fn sync(store: &mut Store, s: &Settings, force: Force, progress: &Reporter) -> R
         }
         if here.is_none() {
             if theirs.is_some() && known.as_ref().is_some_and(|k| k.0 != "deleted") {
-                // erased here: a tombstone on the server, so every device learns it
-                jobs.push(Job::Tombstone { id: id.clone() });
+                if erased_here.contains(&id) {
+                    // deleted for good here: a tombstone on the server, so every device learns it
+                    jobs.push(Job::Tombstone { id: id.clone() });
+                } else {
+                    // missing here without being deleted (the index lost it): fetched again
+                    state.notes.remove(&id);
+                }
             }
             continue;
         }

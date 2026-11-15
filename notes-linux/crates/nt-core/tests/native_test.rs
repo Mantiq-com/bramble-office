@@ -376,3 +376,26 @@ fn a_library_moves_to_a_new_folder() {
     nt_core::store::set_location_in(&cfg, None).unwrap();
     assert_eq!(nt_core::store::location_in(&cfg), None);
 }
+
+#[test]
+fn a_note_the_index_lost_is_read_again_not_deleted() {
+    // (a Notes library lost a note for good this way: its index row went missing and the files
+    // and the server were told it was deleted)
+    let dir = common::scratch("native-lost-row");
+    let lib = dir.join("Bramble Notes");
+    let mut st = Store::open_library(&lib).unwrap();
+    let ids = fill(&mut st, &dir);
+    drop(st);
+    let db = rusqlite::Connection::open(lib.join("index/NoteStore.sqlite")).unwrap();
+    db.execute("DELETE FROM ZICCLOUDSYNCINGOBJECT WHERE ZIDENTIFIER = ?1", [&ids[1]]).unwrap();
+    drop(db);
+    let mut st = Store::open_library(&lib).unwrap();
+    let j: serde_json::Value = serde_json::from_slice(&std::fs::read(lib.join(format!("notes/{}.json", ids[1]))).unwrap()).unwrap();
+    assert_ne!(j["deleted"], true, "the note's file isn't turned into a tombstone");
+    st.refresh().unwrap();
+    assert!(st.note(&ids[1]).is_ok(), "read back in from its file");
+    // a note really deleted still becomes a tombstone
+    st.erase_note(&ids[0]).unwrap();
+    let t: serde_json::Value = serde_json::from_slice(&std::fs::read(lib.join(format!("notes/{}.json", ids[0]))).unwrap()).unwrap();
+    assert_eq!(t["deleted"], true);
+}
