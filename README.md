@@ -20,7 +20,7 @@
 
 ## Install with one command
 
-Installs all three apps (Keydeck, Letters and Values) from the latest release, with app-menu or
+Installs all four apps (Keydeck, Letters, Values and Bramble Notes) from the latest release, with app-menu or
 Start-menu shortcuts. No administrator rights needed; run the same command again to update.
 
 **Linux** (x86_64) and **macOS**, in a terminal:
@@ -36,7 +36,7 @@ irm https://raw.githubusercontent.com/bramble-apps/bramble-office/main/install.p
 ```
 
 On Linux the apps go into `~/.local/share/bramble-office` (unpacked, so they run without FUSE), with
-launchers `keydeck`, `letters` and `values` in `~/.local/bin`. On macOS they go into `~/Applications`, and
+launchers `keydeck`, `letters`, `values` and `bramble-notes` in `~/.local/bin`. On macOS they go into `~/Applications`, and
 on Windows into `%LOCALAPPDATA%\Programs\Bramble Office`, with Start-menu and desktop shortcuts.
 To remove them, run `curl -fsSL https://raw.githubusercontent.com/bramble-apps/bramble-office/main/install.sh | sh -s -- --uninstall`
 (Linux, macOS) or `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/bramble-apps/bramble-office/main/install.ps1))) -Uninstall`
@@ -46,13 +46,14 @@ To remove them, run `curl -fsSL https://raw.githubusercontent.com/bramble-apps/b
 
 | System | Download |
 |---|---|
-| **Windows** 10 and 11 (64-bit) | [![Download for Windows](https://img.shields.io/badge/Windows-Download-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/bramble-apps/bramble-office/releases/latest/download/Bramble-Office-windows-x86_64.zip) |
+| **Windows** 10 and 11 (64-bit): Keydeck, Values, Letters and Bramble Notes | [![Download for Windows](https://img.shields.io/badge/Windows-Download-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/bramble-apps/bramble-office/releases/latest/download/Bramble-Office-windows-x86_64.zip) |
 | **macOS**, Apple silicon (M1 and later), macOS 11+ | [![Download for Apple silicon](https://img.shields.io/badge/macOS-Apple_silicon-111111?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/bramble-apps/bramble-office/releases/latest/download/Bramble-Office-macos-apple-silicon.zip) |
 | **macOS**, Intel Macs, macOS 10.15+ | [![Download for Intel Macs](https://img.shields.io/badge/macOS-Intel-555555?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/bramble-apps/bramble-office/releases/latest/download/Bramble-Office-macos-intel.zip) |
 | **Linux** AppImages (x86_64): one file per app, nothing to install | [![Keydeck AppImage](https://img.shields.io/badge/Keydeck-AppImage-c2306a?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/bramble-apps/bramble-office/releases/latest/download/Keydeck-x86_64.AppImage) [![Values AppImage](https://img.shields.io/badge/Values-AppImage-8e3a8a?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/bramble-apps/bramble-office/releases/latest/download/Values-x86_64.AppImage) [![Letters AppImage](https://img.shields.io/badge/Letters-AppImage-5a7f3c?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/bramble-apps/bramble-office/releases/latest/download/Letters-x86_64.AppImage) [![Bramble Notes AppImage](https://img.shields.io/badge/Notes-AppImage-c99a06?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/bramble-apps/bramble-office/releases/latest/download/Bramble-Notes-x86_64.AppImage) |
+| **Linux** Flatpak bundles (x86_64): one file per app, sandboxed | [![Keydeck Flatpak](https://img.shields.io/badge/Keydeck-Flatpak-c2306a?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/bramble-apps/bramble-office/releases/latest/download/Keydeck-x86_64.flatpak) [![Values Flatpak](https://img.shields.io/badge/Values-Flatpak-8e3a8a?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/bramble-apps/bramble-office/releases/latest/download/Values-x86_64.flatpak) [![Letters Flatpak](https://img.shields.io/badge/Letters-Flatpak-5a7f3c?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/bramble-apps/bramble-office/releases/latest/download/Letters-x86_64.flatpak) [![Bramble Notes Flatpak](https://img.shields.io/badge/Notes-Flatpak-c99a06?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/bramble-apps/bramble-office/releases/latest/download/Bramble-Notes-x86_64.flatpak) |
 | **Android** 8+, tablets and phones (64-bit ARM): one app each. *Beta* | [![Keydeck for Android](https://img.shields.io/badge/Keydeck-Android-c2306a?style=for-the-badge&logo=android&logoColor=white)](https://github.com/bramble-apps/bramble-office/releases/latest/download/Keydeck-android.apk) [![Values for Android](https://img.shields.io/badge/Values-Android-8e3a8a?style=for-the-badge&logo=android&logoColor=white)](https://github.com/bramble-apps/bramble-office/releases/latest/download/Values-android.apk) [![Letters for Android](https://img.shields.io/badge/Letters-Android-5a7f3c?style=for-the-badge&logo=android&logoColor=white)](https://github.com/bramble-apps/bramble-office/releases/latest/download/Letters-android.apk) [![Bramble Notes for Android](https://img.shields.io/badge/Notes-Android-c99a06?style=for-the-badge&logo=android&logoColor=white)](https://github.com/bramble-apps/bramble-office/releases/latest/download/Bramble-Notes-android.apk) |
 | **Android** with [Obtainium](https://github.com/ImranR98/Obtainium): installs from these releases and keeps the apps up to date | [<img src="https://bramble-apps.github.io/img/badge-obtainium.png" alt="Get it on Obtainium" height="40">](https://bramble-apps.github.io/obtainium.html?app=all) [Keydeck](https://bramble-apps.github.io/obtainium.html?app=keydeck) · [Values](https://bramble-apps.github.io/obtainium.html?app=values) · [Letters](https://bramble-apps.github.io/obtainium.html?app=letters) · [Notes](https://bramble-apps.github.io/obtainium.html?app=notes) |
-| **Linux**, all three apps in one archive (x86_64) | [![Download for Linux](https://img.shields.io/badge/Linux-.tar.gz-333333?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/bramble-apps/bramble-office/releases/latest/download/Bramble-Office-linux-x86_64.tar.gz) |
+| **Linux**, all four apps in one archive (x86_64) | [![Download for Linux](https://img.shields.io/badge/Linux-.tar.gz-333333?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/bramble-apps/bramble-office/releases/latest/download/Bramble-Office-linux-x86_64.tar.gz) |
 
 Free and open source (GPL-3.0). No account, no subscription, no tracking.
 
@@ -98,12 +99,12 @@ last ten years). Nothing else to install.
 
 1. Unzip the download for your Mac: **Apple silicon** for M1 and later, **Intel** for older Macs. (Apple
    menu > About This Mac shows which you have.)
-2. Drag Keydeck, Values and Letters into **Applications**.
+2. Drag Keydeck, Values, Letters and Bramble Notes into **Applications**.
 3. The apps aren't notarized yet: the first time, **right-click (or Control-click) the app and choose Open**,
    then Open again. If macOS says the app is damaged, run this once in Terminal:
 
    ```sh
-   xattr -cr /Applications/Keydeck.app /Applications/Values.app /Applications/Letters.app
+   xattr -cr /Applications/Keydeck.app /Applications/Values.app /Applications/Letters.app "/Applications/Bramble Notes.app"
    ```
 
 Apple silicon builds need macOS 11 Big Sur or later; Intel builds need macOS 10.15 Catalina or later.
@@ -116,6 +117,17 @@ Apple silicon builds need macOS 11 Big Sur or later; Intel builds need macOS 10.
 chmod +x Keydeck-x86_64.AppImage
 ./Keydeck-x86_64.AppImage
 ```
+
+**Flatpak** (any distribution with Flatpak): download the app's `.flatpak` file and install it. The
+freedesktop runtime it needs comes from Flathub the first time.
+
+```sh
+flatpak install --user Keydeck-x86_64.flatpak
+flatpak run io.github.bramble_apps.Keydeck
+```
+
+Update by installing a newer file the same way. In the sandbox, files open and save through the
+system's file chooser; printing, speaking text and Notes' fingerprint unlock may not be available.
 
 **Archive:** unpack it and run the apps from the `bramble-office` folder (copy them to `~/.local/bin` to
 have them on your `PATH`).

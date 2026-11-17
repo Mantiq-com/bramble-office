@@ -1,4 +1,4 @@
-# Builds Keydeck, Values and Letters for Linux, Windows, macOS (Apple silicon and Intel) and Android.
+# Builds Keydeck, Values, Letters and Bramble Notes for Linux (AppImages, Flatpak bundles), Windows, macOS (Apple silicon and Intel) and Android.
 # Pushing a tag such as v0.1.0 also publishes a GitHub release with every download; Run
 # workflow (the Actions tab) builds without publishing.
 name: Build
@@ -25,7 +25,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Libraries
-        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libxrender1 libxfixes3 libgtk-3-dev
+        # (GitHub's Azure Ubuntu mirror sometimes stops resolving: use Ubuntu's own servers and
+        # retry, so one bad minute doesn't fail a release)
+        timeout-minutes: 20
+        run: |
+          sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#http://archive.ubuntu.com/ubuntu#g' /etc/apt/sources.list
+          sudo rm -f /etc/apt/apt-mirrors.txt
+          sudo sed -i 's#mirror+file:/etc/apt/apt-mirrors.txt#http://archive.ubuntu.com/ubuntu/#g' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
+          for i in 1 2 3 4 5; do
+            sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update && \
+            sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y --fix-missing libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libxrender1 libxfixes3 libgtk-3-dev libasound2-dev libdbus-1-dev && exit 0
+            echo "attempt $i failed; retrying in 30 s"; sleep 30
+          done
+          exit 1
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -33,15 +45,17 @@ jobs:
             keynote-linux
             numbers-linux
             pages-linux
+            notes-linux
       - name: Build
         run: |
           (cd keynote-linux && cargo build --release -p kn-app)
           (cd numbers-linux && cargo build --release -p nm-app)
           (cd pages-linux && cargo build --release -p pg-app)
+          (cd notes-linux && cargo build --release -p nt-app)
       - name: Package
         run: |
           mkdir -p out/bramble-office dist
-          cp keynote-linux/target/release/keydeck numbers-linux/target/release/values pages-linux/target/release/letters out/bramble-office/
+          cp keynote-linux/target/release/keydeck numbers-linux/target/release/values pages-linux/target/release/letters notes-linux/target/release/bramble-notes out/bramble-office/
           cp LICENSE README.md out/bramble-office/
           tar -C out -czf dist/Bramble-Office-linux-x86_64.tar.gz bramble-office
       - name: AppImages
@@ -53,9 +67,45 @@ jobs:
           $S keynote-linux/target/release/keydeck keydeck Keydeck "Presentations that open and save Apple Keynote files" "Office;Presentation;" "application/x-iwork-keynote-sffkey;application/vnd.apple.keynote;application/vnd.openxmlformats-officedocument.presentationml.presentation;" keynote-linux/crates/kn-app/data/icons/keydeck-256.png dist/Keydeck-x86_64.AppImage
           $S numbers-linux/target/release/values values Values "Spreadsheets that open and save Apple Numbers files" "Office;Spreadsheet;" "application/x-iwork-numbers-sffnumbers;application/vnd.apple.numbers;text/csv;application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;" numbers-linux/crates/nm-app/data/icons/numdeck-256.png dist/Values-x86_64.AppImage
           $S pages-linux/target/release/letters letters Letters "Word processing and page layout that open and save Apple Pages files" "Office;WordProcessor;" "application/x-iwork-pages-sffpages;application/vnd.apple.pages;application/vnd.openxmlformats-officedocument.wordprocessingml.document;application/rtf;text/markdown;text/plain;" pages-linux/crates/pg-app/data/icons/letters-256.png dist/Letters-x86_64.AppImage
+          $S notes-linux/target/release/bramble-notes bramble-notes "Bramble Notes" "Notes, checklists and tables, with Apple Notes import and WebDAV sync" "Office;" "" notes-linux/crates/nt-app/data/icons/notes-256.png dist/Bramble-Notes-x86_64.AppImage
       - uses: actions/upload-artifact@v4
         with:
           name: linux
+          path: dist/*
+
+  flatpak:
+    # single-file Flatpak bundles, wrapped from the Linux build's programs (flatpak.sh)
+    if: ${{ github.event_name == 'push' || inputs.systems == 'all' || inputs.systems == 'linux' }}
+    needs: linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux
+          path: lin
+      - name: Flatpak and its runtime
+        timeout-minutes: 20
+        run: |
+          for i in 1 2 3 4 5; do
+            sudo apt-get -o Acquire::Retries=5 update && sudo apt-get -o Acquire::Retries=5 install -y flatpak && break
+            echo "attempt $i failed; retrying in 30 s"; sleep 30
+          done
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.freedesktop.Platform//26.08
+      - name: Bundles
+        run: |
+          tar -xzf lin/Bramble-Office-linux-x86_64.tar.gz
+          mkdir -p dist
+          S=keynote-linux/tools/suite/flatpak.sh
+          I=io.github.bramble_apps
+          $S bramble-office/keydeck $I.Keydeck keydeck "keynote-linux/crates/kn-app/data/icons/keydeck-{s}.png" dist/Keydeck-x86_64.flatpak --share=network --socket=pulseaudio
+          $S bramble-office/values $I.Values values "numbers-linux/crates/nm-app/data/icons/numdeck-{s}.png" dist/Values-x86_64.flatpak --share=network --socket=pulseaudio --socket=cups
+          $S bramble-office/letters $I.Letters letters "pages-linux/crates/pg-app/data/icons/letters-{s}.png" dist/Letters-x86_64.flatpak --share=network --socket=pulseaudio --socket=cups
+          $S bramble-office/bramble-notes $I.Notes bramble-notes "notes-linux/crates/nt-app/data/icons/notes-{s}.png" dist/Bramble-Notes-x86_64.flatpak --share=network --socket=pulseaudio --socket=cups --system-talk-name=net.reactivated.Fprint
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
           path: dist/*
 
   windows:
@@ -70,6 +120,7 @@ jobs:
             keynote-linux
             numbers-linux
             pages-linux
+            notes-linux
       - name: Build
         shell: bash
         # (all three, even when one fails, so one run shows every error)
@@ -78,12 +129,13 @@ jobs:
           (cd keynote-linux && cargo build --release -p kn-app) || ok=1
           (cd numbers-linux && cargo build --release -p nm-app) || ok=1
           (cd pages-linux && cargo build --release -p pg-app) || ok=1
+          (cd notes-linux && cargo build --release -p nt-app) || ok=1
           exit $ok
       - name: Package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force out/bramble-office, dist | Out-Null
-          Copy-Item keynote-linux/target/release/keydeck.exe, numbers-linux/target/release/values.exe, pages-linux/target/release/letters.exe, LICENSE, README.md out/bramble-office/
+          Copy-Item keynote-linux/target/release/keydeck.exe, numbers-linux/target/release/values.exe, pages-linux/target/release/letters.exe, notes-linux/target/release/bramble-notes.exe, LICENSE, README.md out/bramble-office/
           Compress-Archive -Path out/bramble-office -DestinationPath dist/Bramble-Office-windows-x86_64.zip
       - uses: actions/upload-artifact@v4
         with:
@@ -113,15 +165,17 @@ jobs:
             keynote-linux
             numbers-linux
             pages-linux
+            notes-linux
       - name: Build the app bundles
         run: |
           keynote-linux/packaging/build-macos.sh
           numbers-linux/packaging/build-macos.sh
           pages-linux/packaging/build-macos.sh
+          notes-linux/packaging/build-macos.sh
       - name: Package
         run: |
           mkdir -p out/bramble-office dist
-          cp -R keynote-linux/dist/Keydeck.app numbers-linux/dist/Values.app pages-linux/dist/Letters.app out/bramble-office/
+          cp -R keynote-linux/dist/Keydeck.app numbers-linux/dist/Values.app pages-linux/dist/Letters.app "notes-linux/dist/Bramble Notes.app" out/bramble-office/
           cp LICENSE README.md out/bramble-office/
           ditto -c -k --keepParent out/bramble-office dist/Bramble-Office-macos-${{ matrix.arch }}.zip
       - uses: actions/upload-artifact@v4
@@ -136,7 +190,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android, x86_64-linux-android
       - uses: Swatinem/rust-cache@v2
         with:
           key: android
@@ -144,21 +198,29 @@ jobs:
             keynote-linux
             numbers-linux
             pages-linux
+            notes-linux
+      # the four Android apps: Flutter over each app's engine (built here for arm64 and x86_64),
+      # all signed with the same key (only with the key in the repo's secrets: every release
+      # must be signed with it, or Android won't install it over the one before)
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.7
+          channel: stable
       - name: Build the APKs
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
           ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
-        # (only with the signing key in the repo's secrets: every release must be signed with the
-        # same key, or Android won't install it over the one before)
         run: |
           if [ -z "$KEYSTORE_B64" ]; then echo "no ANDROID_KEYSTORE_B64 secret: skipping Android"; exit 0; fi
           export JAVA_HOME="$JAVA_HOME_17_X64" ANDROID_KEYSTORE="$RUNNER_TEMP/release.jks"
           echo "$KEYSTORE_B64" | base64 -d > "$ANDROID_KEYSTORE"
-          case "$GITHUB_REF" in refs/tags/v*) export VERSION="${GITHUB_REF_NAME#v}" ;; esac
-          S=keynote-linux/tools/android/build-apk.sh
-          $S keynote-linux kn-app kn_app app.bramble.keydeck Keydeck keynote-linux/crates/kn-app/data/icons/keydeck-256.png dist/Keydeck-android.apk "application/vnd.apple.keynote application/x-iwork-keynote-sffkey application/vnd.openxmlformats-officedocument.presentationml.presentation"
-          $S numbers-linux nm-app nm_app app.bramble.values Values numbers-linux/crates/nm-app/data/icons/numdeck-256.png dist/Values-android.apk "application/vnd.apple.numbers application/x-iwork-numbers-sffnumbers application/vnd.openxmlformats-officedocument.spreadsheetml.sheet text/csv text/comma-separated-values text/tab-separated-values"
-          $S pages-linux pg-app pg_app app.bramble.letters Letters pages-linux/crates/pg-app/data/icons/letters-256.png dist/Letters-android.apk "application/vnd.apple.pages application/x-iwork-pages-sffpages application/vnd.openxmlformats-officedocument.wordprocessingml.document application/rtf text/rtf text/markdown"
+          mkdir -p dist
+          for app in keydeck_mobile:Keydeck letters_mobile:Letters values_mobile:Values notes_mobile:Bramble-Notes; do
+            dir=${app%%:*}; name=${app##*:}
+            $dir/tool/build_engine.sh arm64-v8a x86_64
+            (cd $dir && flutter build apk --release)
+            cp $dir/build/app/outputs/flutter-apk/app-release.apk dist/$name-android.apk
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: android
@@ -168,7 +230,7 @@ jobs:
   release:
     # a tag publishes the downloads as a GitHub release
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
-    needs: [linux, windows, macos, android]
+    needs: [linux, flatpak, windows, macos, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write

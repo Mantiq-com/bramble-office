@@ -1,4 +1,4 @@
-# Install (or update) the whole Bramble Office suite - Keydeck, Letters and Values - on Windows,
+# Install (or update) the whole Bramble Office suite - Keydeck, Letters, Values and Bramble Notes - on Windows,
 # from the latest GitHub release, with Start menu and desktop shortcuts. In PowerShell:
 #   irm https://raw.githubusercontent.com/bramble-apps/bramble-office/main/install.ps1 | iex
 # Remove it again:
@@ -11,7 +11,7 @@ $repo = 'bramble-apps/bramble-office'
 $dest = Join-Path $env:LOCALAPPDATA 'Programs\Bramble Office'
 $menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'Bramble Office'
 $desk = [Environment]::GetFolderPath('Desktop')
-$apps = @(@{ Name = 'Keydeck'; Exe = 'keydeck.exe' }, @{ Name = 'Letters'; Exe = 'letters.exe' }, @{ Name = 'Values'; Exe = 'values.exe' })
+$apps = @(@{ Name = 'Keydeck'; Exe = 'keydeck.exe' }, @{ Name = 'Letters'; Exe = 'letters.exe' }, @{ Name = 'Values'; Exe = 'values.exe' }, @{ Name = 'Bramble Notes'; Exe = 'bramble-notes.exe' })
 
 if ($Uninstall) {
     foreach ($a in $apps) { Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $desk "$($a.Name).lnk") }
@@ -37,6 +37,7 @@ try {
     $shell = New-Object -ComObject WScript.Shell
     foreach ($a in $apps) {
         $exe = Join-Path $dest $a.Exe
+        if (-not (Test-Path $exe)) { continue }
         foreach ($dir in @($menu, $desk)) {
             $lnk = $shell.CreateShortcut((Join-Path $dir "$($a.Name).lnk"))
             $lnk.TargetPath = $exe
@@ -47,7 +48,7 @@ try {
         Write-Host "  installed $($a.Name)"
     }
     Write-Host ''
-    Write-Host 'Bramble Office is installed: Keydeck, Letters and Values are in the Start menu and on the desktop.'
+    Write-Host 'Bramble Office is installed: Keydeck, Letters, Values and Bramble Notes are in the Start menu and on the desktop.'
 } finally {
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $tmp
 }

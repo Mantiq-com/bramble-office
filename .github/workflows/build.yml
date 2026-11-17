@@ -1,4 +1,4 @@
-# Builds Keydeck, Values, Letters and Bramble Notes for Linux, Windows, macOS (Apple silicon and Intel) and Android.
+# Builds Keydeck, Values, Letters and Bramble Notes for Linux (AppImages, Flatpak bundles), Windows, macOS (Apple silicon and Intel) and Android.
 # Pushing a tag such as v0.1.0 also publishes a GitHub release with every download; Run
 # workflow (the Actions tab) builds without publishing.
 name: Build
@@ -71,6 +71,41 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: linux
+          path: dist/*
+
+  flatpak:
+    # single-file Flatpak bundles, wrapped from the Linux build's programs (flatpak.sh)
+    if: ${{ github.event_name == 'push' || inputs.systems == 'all' || inputs.systems == 'linux' }}
+    needs: linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux
+          path: lin
+      - name: Flatpak and its runtime
+        timeout-minutes: 20
+        run: |
+          for i in 1 2 3 4 5; do
+            sudo apt-get -o Acquire::Retries=5 update && sudo apt-get -o Acquire::Retries=5 install -y flatpak && break
+            echo "attempt $i failed; retrying in 30 s"; sleep 30
+          done
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.freedesktop.Platform//26.08
+      - name: Bundles
+        run: |
+          tar -xzf lin/Bramble-Office-linux-x86_64.tar.gz
+          mkdir -p dist
+          S=keynote-linux/tools/suite/flatpak.sh
+          I=io.github.bramble_apps
+          $S bramble-office/keydeck $I.Keydeck keydeck "keynote-linux/crates/kn-app/data/icons/keydeck-{s}.png" dist/Keydeck-x86_64.flatpak --share=network --socket=pulseaudio
+          $S bramble-office/values $I.Values values "numbers-linux/crates/nm-app/data/icons/numdeck-{s}.png" dist/Values-x86_64.flatpak --share=network --socket=pulseaudio --socket=cups
+          $S bramble-office/letters $I.Letters letters "pages-linux/crates/pg-app/data/icons/letters-{s}.png" dist/Letters-x86_64.flatpak --share=network --socket=pulseaudio --socket=cups
+          $S bramble-office/bramble-notes $I.Notes bramble-notes "notes-linux/crates/nt-app/data/icons/notes-{s}.png" dist/Bramble-Notes-x86_64.flatpak --share=network --socket=pulseaudio --socket=cups --system-talk-name=net.reactivated.Fprint
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
           path: dist/*
 
   windows:
@@ -195,7 +230,7 @@ jobs:
   release:
     # a tag publishes the downloads as a GitHub release
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
-    needs: [linux, windows, macos, android]
+    needs: [linux, flatpak, windows, macos, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write

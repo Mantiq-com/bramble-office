@@ -12,7 +12,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 SITE = "https://bramble-apps.github.io"
 SOURCE = "https://github.com/bramble-apps/bramble-office"
-VERSION = "0.4.1"
+VERSION = "0.5.2"
 
 # (common plugs: windows, files in home and on USB drives, the network; media apps also sound)
 APPS = [

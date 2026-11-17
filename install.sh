@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install (or update) the whole Bramble Office suite - Keydeck, Letters and Values - from the
+# Install (or update) the whole Bramble Office suite - Keydeck, Letters, Values and Bramble Notes - from the
 # latest GitHub release, with menu shortcuts. One command:
 #   curl -fsSL https://raw.githubusercontent.com/bramble-apps/bramble-office/main/install.sh | sh
 # Remove it again:
@@ -7,13 +7,13 @@
 #
 # Linux (x86_64): the AppImages are unpacked into ~/.local/share/bramble-office (so they run
 # without FUSE), with launchers in ~/.local/bin and app-menu entries with icons.
-# macOS: the three apps go into ~/Applications.
+# macOS: the apps go into ~/Applications.
 # Nothing needs root; run it again to update.
 set -eu
 
 REPO=bramble-apps/bramble-office
 URL="https://github.com/$REPO/releases/latest/download"
-APPS="Keydeck Letters Values"
+APPS="Keydeck Letters Values Bramble-Notes"
 
 say() { printf '%s\n' "$*"; }
 fail() { say "Bramble Office: $*" >&2; exit 1; }
@@ -73,13 +73,13 @@ Linux)
     command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q "$apps_dir" || true
     command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t "$data/icons/hicolor" 2>/dev/null || true
     say ""
-    say "Bramble Office is installed: Keydeck, Letters and Values are in your app menu."
+    say "Bramble Office is installed: Keydeck, Letters, Values and Bramble Notes are in your app menu."
     case ":$PATH:" in *":$bin:"*) ;; *) say "(To start them from a terminal too, add $bin to your PATH.)" ;; esac
     ;;
 Darwin)
     dest=$HOME/Applications
     if $uninstall; then
-        for a in $APPS; do rm -rf "${dest:?}/$a.app"; done
+        for a in $APPS; do rm -rf "${dest:?}/$(printf '%s' "$a" | tr - ' ').app"; done
         say "Bramble Office removed (your documents are untouched)."
         exit 0
     fi
@@ -90,6 +90,8 @@ Darwin)
     unzip -q "$tmp/suite.zip" -d "$tmp"
     mkdir -p "$dest"
     for a in $APPS; do
+        a=$(printf '%s' "$a" | tr - ' ')   # (the app is "Bramble Notes.app")
+        [ -d "$tmp/bramble-office/$a.app" ] || continue
         rm -rf "${dest:?}/$a.app"
         mv "$tmp/bramble-office/$a.app" "$dest/"
         # (downloaded by a script, not a browser: no quarantine prompt, but clear it in case)
@@ -97,7 +99,7 @@ Darwin)
         say "  installed $a"
     done
     say ""
-    say "Bramble Office is installed in $dest: find Keydeck, Letters and Values in Launchpad or Spotlight."
+    say "Bramble Office is installed in $dest: find Keydeck, Letters, Values and Bramble Notes in Launchpad or Spotlight."
     ;;
 *)
     fail "on Windows, run this in PowerShell instead:  irm https://raw.githubusercontent.com/$REPO/main/install.ps1 | iex"
