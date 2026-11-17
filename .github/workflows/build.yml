@@ -137,6 +137,10 @@ jobs:
           New-Item -ItemType Directory -Force out/bramble-office, dist | Out-Null
           Copy-Item keynote-linux/target/release/keydeck.exe, numbers-linux/target/release/values.exe, pages-linux/target/release/letters.exe, notes-linux/target/release/bramble-notes.exe, LICENSE, README.md out/bramble-office/
           Compress-Archive -Path out/bramble-office -DestinationPath dist/Bramble-Office-windows-x86_64.zip
+          # Bramble Notes on its own too
+          New-Item -ItemType Directory -Force out/bramble-notes | Out-Null
+          Copy-Item notes-linux/target/release/bramble-notes.exe, LICENSE out/bramble-notes/
+          Compress-Archive -Path out/bramble-notes -DestinationPath dist/Bramble-Notes-windows-x86_64.zip
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -178,6 +182,8 @@ jobs:
           cp -R keynote-linux/dist/Keydeck.app numbers-linux/dist/Values.app pages-linux/dist/Letters.app "notes-linux/dist/Bramble Notes.app" out/bramble-office/
           cp LICENSE README.md out/bramble-office/
           ditto -c -k --keepParent out/bramble-office dist/Bramble-Office-macos-${{ matrix.arch }}.zip
+          # Bramble Notes on its own too
+          ditto -c -k --keepParent "notes-linux/dist/Bramble Notes.app" dist/Bramble-Notes-macos-${{ matrix.arch }}.zip
       - uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}
