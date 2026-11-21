@@ -1,0 +1,70 @@
+# Builds the single-root WebAssembly browser bundles for a `host-bridge-*` tag and attaches them
+# to that tag's GitHub release, so an embedding application can pin each bundle by SHA-256.
+name: Browser host bundles
+
+on:
+  push:
+    tags: ["host-bridge-*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag name used for archive directory naming (dry-run; does not create a release)"
+        type: string
+        default: "host-bridge-dev"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: web-host
+          workspaces: |
+            keynote-linux
+            numbers-linux
+            pages-linux
+      - name: WebAssembly tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk,wasm-bindgen-cli
+      - name: Package tools
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update
+          sudo apt-get -o Acquire::Retries=5 install -y binaryen
+      - name: Build and package host bundles
+        run: |
+          TAG="${{ github.event_name == 'push' && github.ref_name || inputs.tag }}"
+          ./tools/build-web.sh --package-tag "${TAG}"
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-host-bundles
+          path: dist/*-web-*.tar.gz
+      # A release created by hand from a local build keeps its bundles: an embedding application
+      # may already pin those checksums, and a rebuild produces different bytes.
+      - name: Publish GitHub release
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/host-bridge-') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "${TAG}" > /dev/null 2>&1; then
+            echo "Release ${TAG} already exists; its bundles are kept."
+          else
+            gh release create "${TAG}" \
+              --title "${TAG}" \
+              --notes "WebAssembly browser host bundles (${TAG})" \
+              "dist/keydeck-web-${TAG}.tar.gz" \
+              "dist/values-web-${TAG}.tar.gz" \
+              "dist/letters-web-${TAG}.tar.gz"
+          fi
