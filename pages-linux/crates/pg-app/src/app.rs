@@ -55,6 +55,15 @@ impl ReadFile {
             _ => ReadFile::Doc(Pages::open(p)),
         }
     }
+
+    pub fn read_bytes(name: &str, bytes: &[u8]) -> Self {
+        let ext = Path::new(name).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+        match ext.as_str() {
+            "docx" => ReadFile::Word(pg_core::wordmode::open_docx_bytes(bytes)),
+            "txt" | "md" | "markdown" | "rtf" | "html" | "htm" => ReadFile::Doc(pg_core::import::import_bytes(name, bytes)),
+            _ => ReadFile::Doc(Pages::open_bytes(name, bytes)),
+        }
+    }
 }
 
 /// Selected cells of one table: anchor and cursor (inclusive corners).
@@ -205,6 +214,7 @@ pub struct App {
     script_cmds: Vec<String>,
     pub automated: bool,
     pub(crate) password: Option<(PathBuf, String, String, bool)>,
+    pub(crate) password_bytes: Option<Vec<u8>>,
     pub set_password: Option<(String, String, String)>,
     perf: Vec<f32>,
     pub buttons: kn_ui::winframe::ButtonLayout,
@@ -274,7 +284,11 @@ impl App {
             // (the page canvas eases notches itself, at the same distance)
             o.input_options.line_scroll_speed = 100.0;
         });
-        let settings = crate::settings::Settings::load();
+        let mut settings = crate::settings::Settings::load();
+        #[cfg(target_arch = "wasm32")]
+        if let Some(a) = kn_ui::web::host_author() {
+            settings.author = a;
+        }
         let mut app = App {
             wb: None,
             hist: History::default(),
@@ -325,6 +339,7 @@ impl App {
             script_cmds: Vec::new(),
             automated: std::env::var_os("CS_SNAP").is_some(),
             password: None,
+            password_bytes: None,
             set_password: None,
             perf: Vec::new(),
             buttons: kn_ui::winframe::ButtonLayout::from_desktop(),
@@ -386,7 +401,14 @@ impl App {
             None => {
                 app.new_document(false);
                 // a new window starts with the template chooser (Settings > For New Documents)
-                app.chooser = (app.settings.show_chooser && !app.automated) || std::env::var_os("CS_WELCOME").is_some();
+                #[cfg(target_arch = "wasm32")]
+                {
+                    app.chooser = !kn_ui::web::is_hosted() && app.settings.show_chooser;
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    app.chooser = (app.settings.show_chooser && !app.automated) || std::env::var_os("CS_WELCOME").is_some();
+                }
             }
         }
         if let Some(z) = std::env::var("CS_ZOOM").ok().and_then(|s| s.parse::<f32>().ok()) {
@@ -436,20 +458,27 @@ impl App {
     /// once; whether each file still exists is checked off the UI thread, since the files may
     /// sit on a network mount (a cloud drive) where a check can take a while the first time.
     pub fn recent(&self) -> Vec<PathBuf> {
-        let mut g = RECENT.lock().unwrap_or_else(|e| e.into_inner());
-        if g.is_none() {
-            let list: Vec<PathBuf> = recent_path().and_then(|p| std::fs::read_to_string(p).ok()).map(|s| s.lines().filter(|l| !l.is_empty()).map(PathBuf::from).collect()).unwrap_or_default();
-            *g = Some(list.clone());
-            std::thread::spawn(move || {
-                let gone: Vec<PathBuf> = list.into_iter().filter(|p| !p.exists()).collect();
-                if !gone.is_empty() {
-                    if let Some(l) = RECENT.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-                        l.retain(|p| !gone.contains(p));
-                    }
-                }
-            });
+        #[cfg(target_arch = "wasm32")]
+        {
+            return Vec::new();
         }
-        g.clone().unwrap_or_default()
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut g = RECENT.lock().unwrap_or_else(|e| e.into_inner());
+            if g.is_none() {
+                let list: Vec<PathBuf> = recent_path().and_then(|p| std::fs::read_to_string(p).ok()).map(|s| s.lines().filter(|l| !l.is_empty()).map(PathBuf::from).collect()).unwrap_or_default();
+                *g = Some(list.clone());
+                std::thread::spawn(move || {
+                    let gone: Vec<PathBuf> = list.into_iter().filter(|p| !p.exists()).collect();
+                    if !gone.is_empty() {
+                        if let Some(l) = RECENT.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+                            l.retain(|p| !gone.contains(p));
+                        }
+                    }
+                });
+            }
+            g.clone().unwrap_or_default()
+        }
     }
 
     pub fn remember(&self, p: &Path) {
@@ -559,6 +588,12 @@ impl App {
     }
 
     pub fn open_dialog(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            kn_ui::web::files::pick_open_doc(&["pages", "docx", "rtf", "txt", "md", "html"], true);
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(p) = file_dialog(|d| {
             d.add_filter("Documents", &["pages", "docx", "rtf", "txt", "md", "html"])
                 .add_filter("Pages document", &["pages"])
@@ -586,30 +621,87 @@ impl App {
     }
 
     pub fn save(&mut self, save_as: bool) {
-        // Word mode: Save writes the .docx back (Save As can still make a Pages document)
-        if let (Some(wm), false) = (self.word.clone(), save_as) {
-            self.save_word(&wm.path, wm.hybrid);
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.save_web(save_as);
             return;
         }
-        let Some(w) = &mut self.wb else { return };
-        let path = match (&w.doc.path, save_as) {
-            (Some(p), false) => p.clone(),
-            _ => {
-                let stem = self.untitled_name.clone().or_else(|| self.word.as_ref().and_then(|wm| wm.path.file_stem()).map(|s| s.to_string_lossy().into_owned())).unwrap_or_else(|| "Untitled".into());
-                match file_dialog(|d| d.add_filter("Pages document", &["pages"]).add_filter("Word document", &["docx"]).set_file_name(format!("{stem}.pages")).save_file()) {
-                    Some(p) => p,
-                    None => return,
-                }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // Word mode: Save writes the .docx back (Save As can still make a Pages document)
+            if let (Some(wm), false) = (self.word.clone(), save_as) {
+                self.save_word(&wm.path, wm.hybrid);
+                return;
             }
-        };
-        if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("docx")) {
-            // a Pages document saved as Word keeps everything inside unless told otherwise
-            let hybrid = self.word.as_ref().map(|w| w.hybrid).unwrap_or(true);
-            self.save_word(&path, hybrid);
+            let Some(w) = &mut self.wb else { return };
+            let path = match (&w.doc.path, save_as) {
+                (Some(p), false) => p.clone(),
+                _ => {
+                    let stem = self.untitled_name.clone().or_else(|| self.word.as_ref().and_then(|wm| wm.path.file_stem()).map(|s| s.to_string_lossy().into_owned())).unwrap_or_else(|| "Untitled".into());
+                    match file_dialog(|d| d.add_filter("Pages document", &["pages"]).add_filter("Word document", &["docx"]).set_file_name(format!("{stem}.pages")).save_file()) {
+                        Some(p) => p,
+                        None => return,
+                    }
+                }
+            };
+            if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("docx")) {
+                // a Pages document saved as Word keeps everything inside unless told otherwise
+                let hybrid = self.word.as_ref().map(|w| w.hybrid).unwrap_or(true);
+                self.save_word(&path, hybrid);
+                return;
+            }
+            self.word = None;
+            self.save_to(&path);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn save_web(&mut self, save_as: bool) {
+        crate::text::finish_typing(self);
+        crate::tables::commit(self);
+        if let (Some(wm), false) = (self.word.clone(), save_as) {
+            let name = wm
+                .path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| "Document.docx".into());
+            let Some(w) = &mut self.wb else { return };
+            match pg_core::wordmode::save_docx_bytes(w, wm.hybrid)
+                .and_then(|bytes| kn_ui::web::files::deliver_file(&name, &bytes, false))
+            {
+                Ok(()) => {
+                    let verb = if kn_ui::web::is_hosted() { "Saved" } else { "Downloaded" };
+                    self.notify(format!("{verb} {name}"));
+                }
+                Err(e) => self.notify(format!("Couldn't save: {e}")),
+            }
             return;
         }
-        self.word = None;
-        self.save_to(&path);
+        let ui = self.ui_state();
+        let stem = self
+            .untitled_name
+            .clone()
+            .or_else(|| self.doc().and_then(|d| d.path.as_ref()).and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned()))
+            .or_else(|| self.word.as_ref().and_then(|wm| wm.path.file_stem()).map(|s| s.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "Document".into());
+        let name = self
+            .doc()
+            .and_then(|d| d.path.as_ref())
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .filter(|n| n.to_ascii_lowercase().ends_with(".pages"))
+            .unwrap_or_else(|| format!("{stem}.pages"));
+        let Some(w) = &mut self.wb else { return };
+        w.set_ui_state(&ui);
+        match w.to_bytes().map_err(|e| e.to_string()).and_then(|bytes| kn_ui::web::files::deliver_file(&name, &bytes, save_as)) {
+            Ok(()) => {
+                w.doc.dirty = false;
+                let verb = if kn_ui::web::is_hosted() { "Saved" } else { "Downloaded" };
+                self.notify(format!("{verb} {name}"));
+            }
+            Err(e) => self.notify(format!("Couldn't save: {e}")),
+        }
     }
 
     /// Write the document as a Word file and keep working on it in Word mode.
@@ -749,7 +841,7 @@ impl App {
         let Some(w) = &self.wb else { return };
         let moving = moving.map(|(ids, d)| ids.into_iter().map(|id| (id, d.x, d.y)).collect()).unwrap_or_default();
         let opts = flow::Options { show_deletions: true, show_markup: self.show_comments, min_pages: self.min_pages, screen_width: self.screen_view.then(|| (self.canvas.size.x / self.canvas.zoom).max(200.0)), moving, ..flow::Options::default() };
-        let t = std::time::Instant::now();
+        let t = web_time::Instant::now();
         let mut l = flow::layout(w, &mut self.canvas.tiles.renderer.fonts, &mut self.flow_cache, &opts);
         if std::env::var_os("CS_PERF").is_some() {
             eprintln!("layout: {} pages in {:.1} ms", l.pages.len(), t.elapsed().as_secs_f32() * 1000.0);
@@ -872,9 +964,19 @@ impl App {
 
     /// Image > Replace: a new picture for the replace target.
     pub fn pick_image(&mut self) {
-        let Some(id) = self.replace_target.take() else { return };
-        let Some(p) = file_dialog(|d| d.add_filter("Pictures", &["png", "jpg", "jpeg"]).pick_file()) else { return };
-        self.replace_image(id, &p);
+        #[cfg(target_arch = "wasm32")]
+        {
+            if self.replace_target.is_some() {
+                kn_ui::web::files::pick_insert_image(&["png", "jpg", "jpeg"]);
+            }
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let Some(id) = self.replace_target.take() else { return };
+            let Some(p) = file_dialog(|d| d.add_filter("Pictures", &["png", "jpg", "jpeg"]).pick_file()) else { return };
+            self.replace_image(id, &p);
+        }
     }
 
     /// Replaces picture `id`'s image with the file at `p` (PNG or JPEG).
@@ -883,8 +985,13 @@ impl App {
             Ok(b) => b,
             Err(e) => return self.notify(format!("Couldn't read the picture: {e}")),
         };
-        let Some((w, h)) = pg_core::kn_format::objects::image_size(&bytes) else { return self.notify("Only PNG and JPEG pictures can be used.") };
         let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "image.png".into());
+        self.replace_image_bytes(id, &name, bytes);
+    }
+
+    pub fn replace_image_bytes(&mut self, id: ObjId, name: &str, bytes: Vec<u8>) {
+        let Some((w, h)) = pg_core::kn_format::objects::image_size(&bytes) else { return self.notify("Only PNG and JPEG pictures can be used.") };
+        let name = name.to_string();
         let res = self.edit("Replace Image", |d, hist| {
             d.structural(hist, &[id], |k| -> Result<(), pg_core::kn_format::Error> {
                 let data = k.add_image_data(bytes, &name)?;
@@ -900,9 +1007,17 @@ impl App {
     /// The Password window's Open: the document with what was typed, or "isn't right".
     pub fn password_open(&mut self) {
         let Some((path, hint, typed, wrong)) = &mut self.password else { return };
-        match Pages::open_with_password(path.as_path(), typed, hint) {
+        let res = match &self.password_bytes {
+            Some(bytes) => {
+                let name = path.to_string_lossy();
+                Pages::open_bytes_with_password(&name, bytes, typed, hint)
+            }
+            None => Pages::open_with_password(path.as_path(), typed, hint),
+        };
+        match res {
             Ok(doc) => {
                 self.password = None;
+                self.password_bytes = None;
                 self.load(doc);
             }
             Err(_) => *wrong = true,
@@ -1029,11 +1144,17 @@ impl eframe::App for App {
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let c = theme::CANVAS_BG();
+            return [c.r() as f32 / 255.0, c.g() as f32 / 255.0, c.b() as f32 / 255.0, 1.0];
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         [0.0; 4]
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        let t0 = std::time::Instant::now();
+        let t0 = web_time::Instant::now();
         kn_ui::glass::native_blur(frame, kn_ui::glass::translucent_panes());
         let ctx = ui.ctx().clone();
         kn_ui::begin_frame(&ctx);
@@ -1041,6 +1162,41 @@ impl eframe::App for App {
         kn_ui::form::set_pref(self.settings.ui_layout);
         if self.cursor.is_some() && !self.chooser {
             kn_ui::typing(&ctx);
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            if self.canvas.tiles.renderer.absorb_fetched_fonts() {
+                self.canvas.tiles.clear_text_caches();
+                self.canvas.tiles.renderer.clear_caches();
+                self.layout = None;
+                self.flow_cache = flow::Cache::default();
+                self.version += 1;
+                ctx.request_repaint();
+            }
+            for ev in kn_ui::web::take_events() {
+                match ev {
+                    kn_ui::web::files::WebEvent::OpenDoc { name, bytes } => crate::tabs::open_bytes_in_tab(self, &name, bytes),
+                    kn_ui::web::files::WebEvent::InsertImage { name, bytes }
+                    | kn_ui::web::files::WebEvent::InsertMedia { name, bytes }
+                    | kn_ui::web::files::WebEvent::PastedImage { name, bytes } => {
+                        if let Some(id) = self.replace_target.take() {
+                            self.replace_image_bytes(id, &name, bytes);
+                        } else {
+                            crate::insert::insert_image_bytes(self, bytes, &name);
+                        }
+                    }
+                    kn_ui::web::files::WebEvent::InsertGallery(pics) => crate::media::add_gallery_bytes(self, pics),
+                    kn_ui::web::files::WebEvent::Dropped { name, bytes } => {
+                        let ext = Path::new(&name).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+                        if matches!(ext.as_str(), "pages" | "docx" | "rtf" | "txt" | "md" | "markdown" | "html" | "htm") {
+                            crate::tabs::open_bytes_in_tab(self, &name, bytes);
+                        } else if kn_ui::media::IMAGE_EXT.contains(&ext.as_str()) {
+                            crate::insert::insert_image_bytes(self, bytes, &name);
+                        }
+                    }
+                }
+            }
+            kn_ui::web::set_dirty(crate::tabs::any_dirty(self));
         }
         fit_window_to_screen(&ctx);
         #[cfg(target_os = "macos")]
@@ -1094,7 +1250,10 @@ impl App {
             });
             match done {
                 Some(true) => self.password_open(),
-                Some(false) => self.password = None,
+                Some(false) => {
+                    self.password = None;
+                    self.password_bytes = None;
+                }
                 None => {}
             }
         }
