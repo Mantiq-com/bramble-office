@@ -704,6 +704,132 @@ impl App {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    fn web_active_name(&self) -> String {
+        if let Some(name) = self
+            .word
+            .as_ref()
+            .and_then(|wm| wm.path.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .filter(|n| !n.is_empty())
+        {
+            return name;
+        }
+        if let Some(name) = self
+            .doc()
+            .and_then(|d| d.path.as_ref())
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .filter(|n| !n.is_empty())
+        {
+            return name;
+        }
+        format!("{}.pages", self.untitled_name.as_deref().unwrap_or("Document"))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn handle_host_request(&mut self, ctx: &egui::Context, req: kn_ui::web::host::HostRequest) {
+        use kn_ui::web::host::{parse_host_call, resolve_host_appearance, serde_json, supported_commands_json, HostCall, HostError};
+        let reply = match parse_host_call(&req.method, &req.params) {
+            Err(err) => Err(err),
+            Ok(HostCall::Commands) => Ok(supported_commands_json()),
+            Ok(HostCall::Inspect) => match self.doc() {
+                Some(doc) => {
+                    let name = self.web_active_name();
+                    Ok(serde_json::json!({ "open": true, "name": name, "path": name, "dirty": doc.dirty }))
+                }
+                None => Ok(serde_json::json!({ "open": false, "name": serde_json::Value::Null, "path": serde_json::Value::Null, "dirty": false })),
+            },
+            Ok(HostCall::Info) => match self.doc() {
+                Some(doc) => Ok(serde_json::json!({ "name": self.web_active_name(), "dirty": doc.dirty })),
+                None => Err(HostError::failed("No document is open.")),
+            },
+            Ok(HostCall::HostTheme { appearance }) => {
+                let dark = resolve_host_appearance(self.look.dark, appearance);
+                self.look.dark = dark;
+                self.look.apply(ctx);
+                ctx.request_repaint();
+                Ok(serde_json::json!({ "appearance": if dark { "dark" } else { "light" } }))
+            }
+            Ok(HostCall::Save { path, keep_source }) => {
+                let name = path.unwrap_or_else(|| self.web_active_name());
+                self.host_save_web(name, false, keep_source)
+            }
+            Ok(HostCall::SaveAs { path, keep_source }) => self.host_save_web(path, true, keep_source),
+        };
+        kn_ui::web::respond_host(&req.id, reply);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn host_save_web(
+        &mut self,
+        out_name: String,
+        is_save_as: bool,
+        keep_source: bool,
+    ) -> Result<kn_ui::web::host::serde_json::Value, kn_ui::web::host::HostError> {
+        use kn_ui::web::host::{serde_json, HostError};
+        if self.wb.is_none() {
+            return Err(HostError::failed("No document is open."));
+        }
+        crate::text::finish_typing(self);
+        crate::tables::commit(self);
+        let ui = self.ui_state();
+        let ext = Path::new(&out_name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .unwrap_or_else(|| "pages".to_string());
+        let is_native = matches!(ext.as_str(), "pages" | "docx");
+        let stem = Path::new(&out_name)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "Document".into());
+        let hybrid = self.word.as_ref().map(|wm| wm.hybrid).unwrap_or(true);
+        let bytes = {
+            let Some(w) = &mut self.wb else {
+                return Err(HostError::failed("No document is open."));
+            };
+            let prev_dirty = w.doc.dirty;
+            match ext.as_str() {
+                "pages" => {
+                    w.set_ui_state(&ui);
+                    w.to_bytes().map_err(|e| HostError::failed(e.to_string()))?
+                }
+                "docx" => {
+                    let bytes = pg_core::wordmode::save_docx_bytes(w, hybrid).map_err(HostError::failed)?;
+                    // save_docx_bytes clears dirty; restore it when exporting a copy.
+                    if keep_source {
+                        w.doc.dirty = prev_dirty;
+                    }
+                    bytes
+                }
+                "pdf" | "rtf" | "md" | "markdown" | "txt" | "html" | "htm" | "epub" => {
+                    pg_core::export::export_bytes(w, &ext, &stem).map_err(HostError::failed)?
+                }
+                other => return Err(HostError::rejected(format!("Letters cannot save .{other} files."))),
+            }
+        };
+        let save_as_flag = is_save_as && !keep_source;
+        kn_ui::web::files::deliver_file(&out_name, &bytes, save_as_flag).map_err(HostError::failed)?;
+        if !keep_source && is_native {
+            if let Some(w) = &mut self.wb {
+                w.doc.dirty = false;
+                if is_save_as {
+                    if ext == "pages" {
+                        self.word = None;
+                        w.doc.path = Some(PathBuf::from(&out_name));
+                    } else {
+                        self.word = Some(WordMode { path: PathBuf::from(&out_name), hybrid });
+                    }
+                    self.untitled_name = None;
+                }
+            }
+            kn_ui::web::set_dirty(crate::tabs::any_dirty(self));
+        }
+        Ok(serde_json::json!({ "name": out_name }))
+    }
+
     /// Write the document as a Word file and keep working on it in Word mode.
     pub fn save_word(&mut self, path: &Path, hybrid: bool) {
         crate::text::finish_typing(self);
@@ -1194,6 +1320,7 @@ impl eframe::App for App {
                             crate::insert::insert_image_bytes(self, bytes, &name);
                         }
                     }
+                    kn_ui::web::files::WebEvent::HostRequest(req) => self.handle_host_request(&ctx, req),
                 }
             }
             kn_ui::web::set_dirty(crate::tabs::any_dirty(self));

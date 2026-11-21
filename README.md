@@ -210,10 +210,14 @@ messages using each app's prefix (`keydeck`, `values`, or `letters`):
 | Direction | Message `type` | Payload |
 |---|---|---|
 | iframe → host | `<app>:ready` | `{ version }` — WASM initialized and ready to receive a document |
-| iframe → host | `<app>:failed` | `{ message }` — startup/graphics error |
+| iframe → host | `<app>:failed` | `{ error }` — startup/graphics error |
 | host → iframe | `<app>:open` | `{ name, bytes: ArrayBuffer \| Uint8Array }` — open a document in memory |
-| iframe → host | `<app>:save` | `{ name, bytes: ArrayBuffer, saveAs: boolean }` — sent on Save / Save As (`bytes` is transferred) |
+| iframe → host | `<app>:save` | `{ name, bytes: ArrayBuffer, saveAs: boolean }` — sent on Save / Save As / Export (`bytes` is transferred) |
 | iframe → host | `<app>:dirty` | `{ dirty: boolean }` — unsaved changes state changed |
+| host → iframe | `<app>:request` | `{ id, method, params }` — control-protocol calls (`engine.execute`, `engine.commands`, `document.inspect`) |
+| iframe → host | `<app>:response` | `{ id, reply: { ok: true, result } \| { ok: false, error, commandRejected } }` — reply to `<app>:request` |
+
+Supported `engine.execute` commands: `file.save` (`{ path?, keepSource? }`), `file.saveAs` (`{ path, keepSource? }`, supporting native `.key`/`.pptx`/`.numbers`/`.xlsx`/`.pages`/`.docx` plus PDF and document exports), `file.info`, and `ui.hostTheme` (`{ appearance: "light" | "dark" | "system" }` for session-only appearance). When a save command succeeds, `<app>:save` is always posted before `<app>:response`.
 
 **Browser limitations:** Features that rely on external desktop programs or local networking are desktop-only
 (movie/GIF export via `ffmpeg`, audio/screen recording, `yt-dlp` web video fetching, `pdflatex` equations in
@@ -253,8 +257,9 @@ To build the WebAssembly bundles (requires `rustup target add wasm32-unknown-unk
 [`trunk`](https://trunkrs.dev/), `wasm-bindgen-cli`, and optionally `wasm-opt` from Binaryen):
 
 ```sh
-./tools/build-web.sh                  # builds dist/web/{keydeck,values,letters}
-./tools/build-web.sh --package        # also writes dist/*-web.zip and dist/Bramble-Office-web.tar.gz
+./tools/build-web.sh                              # builds dist/web/{keydeck,values,letters}
+./tools/build-web.sh --package                    # also writes dist/*-web.zip and dist/Bramble-Office-web.tar.gz
+./tools/build-web.sh --package-tag host-bridge-1  # writes single-root dist/{keydeck,values,letters}-web-<tag>.tar.gz + SHA-256
 ```
 
 For interactive development with hot reload, run `trunk serve` inside `keynote-linux/crates/kn-web`
