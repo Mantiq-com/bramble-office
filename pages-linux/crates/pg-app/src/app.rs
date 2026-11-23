@@ -733,6 +733,14 @@ impl App {
         let reply = match parse_host_call(&req.method, &req.params) {
             Err(err) => Err(err),
             Ok(HostCall::Commands) => Ok(supported_commands_json()),
+            Ok(HostCall::New { template }) => {
+                let layout = template.as_deref().is_some_and(|t| t.eq_ignore_ascii_case("layout"));
+                self.new_document(layout);
+                kn_ui::web::set_dirty(false);
+                ctx.request_repaint();
+                let name = self.web_active_name();
+                Ok(serde_json::json!({ "name": name, "dirty": false }))
+            }
             Ok(HostCall::Inspect) => match self.doc() {
                 Some(doc) => {
                     let name = self.web_active_name();

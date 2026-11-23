@@ -71,6 +71,20 @@ build_app() {
   (cd "$ROOT/$crate_dir" && trunk build --release)
   rm -f "$ROOT/dist/web/$app/.trunk-lock"
   cp "$ROOT/LICENSE" "$ROOT/dist/web/$app/LICENSE"
+  case "$app" in
+    keydeck)
+      cargo run --manifest-path "$ROOT/keynote-linux/Cargo.toml" \
+        --package kn-model --example blankdoc -- \
+        "$ROOT/keynote-linux/crates/kn-app/data/themes/White.key" \
+        "$ROOT/dist/web/keydeck/blank.key"
+      ;;
+    values)
+      cp "$ROOT/numbers-linux/crates/nm-core/data/Blank.numbers" "$ROOT/dist/web/values/blank.numbers"
+      ;;
+    letters)
+      cp "$ROOT/pages-linux/crates/pg-core/data/Blank.pages" "$ROOT/dist/web/letters/blank.pages"
+      ;;
+  esac
 }
 
 zip_dir() {

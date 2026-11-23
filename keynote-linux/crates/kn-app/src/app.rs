@@ -1397,6 +1397,19 @@ impl App {
         let reply = match parse_host_call(&req.method, &req.params) {
             Err(err) => Err(err),
             Ok(HostCall::Commands) => Ok(supported_commands_json()),
+            Ok(HostCall::New { .. }) => match crate::themes::open(&None).and_then(kn_model::Document::new_from_theme) {
+                Ok(doc) => {
+                    self.show_theme_chooser = false;
+                    self.changing_theme = false;
+                    self.fileops.untitled_name = None;
+                    self.new_document(doc);
+                    kn_ui::web::set_dirty(false);
+                    ctx.request_repaint();
+                    let name = self.web_active_name();
+                    Ok(serde_json::json!({ "name": name, "dirty": false }))
+                }
+                Err(e) => Err(HostError::failed(format!("Couldn't create presentation: {e}"))),
+            },
             Ok(HostCall::Inspect) => match self.doc.as_ref() {
                 Some(doc) => {
                     let name = self.web_active_name();

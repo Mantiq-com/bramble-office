@@ -53,6 +53,8 @@ pub enum HostCall {
     Commands,
     /// `document.inspect` — report whether a document is open, its filename, and its dirty flag.
     Inspect,
+    /// `engine.execute` -> `file.new`
+    New { template: Option<String> },
     /// `engine.execute` -> `file.save`
     Save { path: Option<String>, keep_source: bool },
     /// `engine.execute` -> `file.saveAs`
@@ -116,6 +118,17 @@ pub fn parse_host_call(method: &str, params: &serde_json::Value) -> Result<HostC
                 Some(_) => return Err(HostError::rejected("command params must be a JSON object")),
             };
             match command {
+                "file.new" => {
+                    let template = match cmd_params.get("template") {
+                        None | Some(serde_json::Value::Null) => None,
+                        Some(serde_json::Value::String(s)) => {
+                            let trimmed = s.trim();
+                            (!trimmed.is_empty()).then(|| trimmed.to_string())
+                        }
+                        Some(_) => return Err(HostError::rejected("file.new template must be a string")),
+                    };
+                    Ok(HostCall::New { template })
+                }
                 "file.save" => {
                     let keep_source = match cmd_params.get("keepSource") {
                         None | Some(serde_json::Value::Null) => false,
@@ -169,6 +182,16 @@ pub fn parse_host_call(method: &str, params: &serde_json::Value) -> Result<HostC
 /// Metadata catalog returned by `engine.commands`.
 pub fn supported_commands_json() -> serde_json::Value {
     serde_json::json!([
+        {
+            "id": "file.new",
+            "label": "Create a new blank document",
+            "params": {
+                "type": "object",
+                "properties": {
+                    "template": { "type": "string" }
+                }
+            }
+        },
         {
             "id": "file.save",
             "label": "Save the open document",
@@ -464,6 +487,14 @@ mod tests {
         assert_eq!(parse_host_call("engine.commands", &json!({})), Ok(HostCall::Commands));
         assert_eq!(parse_host_call("document.inspect", &json!({})), Ok(HostCall::Inspect));
         assert_eq!(
+            parse_host_call("engine.execute", &json!({ "command": "file.new" })),
+            Ok(HostCall::New { template: None })
+        );
+        assert_eq!(
+            parse_host_call("engine.execute", &json!({ "command": "file.new", "params": { "template": "blank" } })),
+            Ok(HostCall::New { template: Some("blank".into()) })
+        );
+        assert_eq!(
             parse_host_call("engine.execute", &json!({ "command": "file.save", "params": {} })),
             Ok(HostCall::Save { path: None, keep_source: false })
         );
@@ -501,6 +532,7 @@ mod tests {
         assert!(parse_host_call("engine.execute", &json!({ "command": "file.saveAs", "params": {} })).unwrap_err().command_rejected);
         assert!(parse_host_call("engine.execute", &json!({ "command": "file.saveAs", "params": { "path": "  " } })).unwrap_err().command_rejected);
         assert!(parse_host_call("engine.execute", &json!({ "command": "file.saveAs", "params": { "path": ".." } })).unwrap_err().command_rejected);
+        assert!(parse_host_call("engine.execute", &json!({ "command": "file.new", "params": { "template": 42 } })).unwrap_err().command_rejected);
         assert!(parse_host_call("engine.execute", &json!({ "command": "ui.hostTheme", "params": { "appearance": "neon" } })).unwrap_err().command_rejected);
     }
 
@@ -516,10 +548,10 @@ mod tests {
     }
 
     #[test]
-    fn supported_commands_catalog_lists_four_commands() {
+    fn supported_commands_catalog_lists_five_commands() {
         let list = supported_commands_json();
         let arr = list.as_array().unwrap();
         let ids: Vec<&str> = arr.iter().filter_map(|c| c["id"].as_str()).collect();
-        assert_eq!(ids, vec!["file.save", "file.saveAs", "file.info", "ui.hostTheme"]);
+        assert_eq!(ids, vec!["file.new", "file.save", "file.saveAs", "file.info", "ui.hostTheme"]);
     }
 }
