@@ -640,6 +640,142 @@ impl App {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    fn web_active_name(&self) -> String {
+        if let Some(name) = self
+            .excel
+            .as_ref()
+            .and_then(|x| x.path.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .filter(|n| !n.is_empty())
+        {
+            return name;
+        }
+        if let Some(name) = self
+            .doc()
+            .and_then(|d| d.path.as_ref())
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .filter(|n| !n.is_empty())
+        {
+            return name;
+        }
+        format!("{}.numbers", self.untitled_name.as_deref().unwrap_or("Spreadsheet"))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn handle_host_request(&mut self, ctx: &egui::Context, req: kn_ui::web::host::HostRequest) {
+        use kn_ui::web::host::{parse_host_call, resolve_host_appearance, serde_json, supported_commands_json, HostCall, HostError};
+        let reply = match parse_host_call(&req.method, &req.params) {
+            Err(err) => Err(err),
+            Ok(HostCall::Commands) => Ok(supported_commands_json()),
+            Ok(HostCall::New { .. }) => {
+                self.new_document();
+                if self.wb.is_some() {
+                    kn_ui::web::set_dirty(false);
+                    ctx.request_repaint();
+                    let name = self.web_active_name();
+                    Ok(serde_json::json!({ "name": name, "dirty": false }))
+                } else {
+                    Err(HostError::failed("Couldn't create spreadsheet."))
+                }
+            }
+            Ok(HostCall::Inspect) => match self.doc() {
+                Some(doc) => {
+                    let name = self.web_active_name();
+                    Ok(serde_json::json!({ "open": true, "name": name, "path": name, "dirty": doc.dirty }))
+                }
+                None => Ok(serde_json::json!({ "open": false, "name": serde_json::Value::Null, "path": serde_json::Value::Null, "dirty": false })),
+            },
+            Ok(HostCall::Info) => match self.doc() {
+                Some(doc) => Ok(serde_json::json!({ "name": self.web_active_name(), "dirty": doc.dirty })),
+                None => Err(HostError::failed("No spreadsheet is open.")),
+            },
+            Ok(HostCall::HostTheme { appearance }) => {
+                let dark = resolve_host_appearance(self.look.dark, appearance);
+                self.look.dark = dark;
+                self.look.apply(ctx);
+                ctx.request_repaint();
+                Ok(serde_json::json!({ "appearance": if dark { "dark" } else { "light" } }))
+            }
+            Ok(HostCall::Save { path, keep_source }) => {
+                let name = path.unwrap_or_else(|| self.web_active_name());
+                self.host_save_web(name, false, keep_source)
+            }
+            Ok(HostCall::SaveAs { path, keep_source }) => self.host_save_web(path, true, keep_source),
+        };
+        kn_ui::web::respond_host(&req.id, reply);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn host_save_web(
+        &mut self,
+        out_name: String,
+        is_save_as: bool,
+        keep_source: bool,
+    ) -> Result<kn_ui::web::host::serde_json::Value, kn_ui::web::host::HostError> {
+        use kn_ui::web::host::{serde_json, HostError};
+        if self.wb.is_none() {
+            return Err(HostError::failed("No spreadsheet is open."));
+        }
+        crate::canvas::commit(self);
+        let ext = Path::new(&out_name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .unwrap_or_else(|| "numbers".to_string());
+        let is_native = matches!(ext.as_str(), "numbers" | "xlsx");
+        let bytes = {
+            let Some(wb) = self.wb.as_mut() else {
+                return Err(HostError::failed("No spreadsheet is open."));
+            };
+            match ext.as_str() {
+                "numbers" => wb.doc.to_bytes().map_err(|e| HostError::failed(e.to_string()))?,
+                "xlsx" => {
+                    let (compat, extras): (bool, nm_core::xlsx::Extras) = match &self.excel {
+                        Some(x) => (
+                            x.compat,
+                            wb.sheets().into_iter().filter_map(|s| Some((s.name.clone(), x.by_sheet.get(&s.id)?.clone()))).collect(),
+                        ),
+                        None => (false, Default::default()),
+                    };
+                    nm_core::xlsx::write_xlsx_full_bytes(wb, compat, &extras)
+                        .map(|(_, bytes)| bytes)
+                        .map_err(|e| HostError::failed(e.to_string()))?
+                }
+                "pdf" => crate::pdf::export_with_bytes(wb, self.canvas.tiles.extras.clone())
+                    .map(|(_, bytes)| bytes)
+                    .map_err(HostError::failed)?,
+                other => return Err(HostError::rejected(format!("Values cannot save .{other} files."))),
+            }
+        };
+        let save_as_flag = is_save_as && !keep_source;
+        kn_ui::web::files::deliver_file(&out_name, &bytes, save_as_flag).map_err(HostError::failed)?;
+        if !keep_source && is_native {
+            if let Some(wb) = &mut self.wb {
+                wb.doc.dirty = false;
+                if is_save_as {
+                    if ext == "numbers" {
+                        self.excel = None;
+                        wb.doc.path = Some(PathBuf::from(&out_name));
+                    } else if let Some(x) = &mut self.excel {
+                        x.path = PathBuf::from(&out_name);
+                    } else {
+                        self.excel = Some(ExcelMode {
+                            path: PathBuf::from(&out_name),
+                            extras: Default::default(),
+                            by_sheet: Default::default(),
+                            compat: false,
+                        });
+                    }
+                    self.untitled_name = None;
+                }
+            }
+            kn_ui::web::set_dirty(self.doc().is_some_and(|d| d.dirty));
+        }
+        Ok(serde_json::json!({ "name": out_name }))
+    }
+
     /// Save as a Numbers spreadsheet at `path` (leaving Excel mode: the document is a Numbers
     /// one from now on).
     pub fn save_numbers_to(&mut self, path: &Path) {
@@ -2410,6 +2546,7 @@ impl eframe::App for App {
                             self.insert_image_bytes(&name, bytes);
                         }
                     }
+                    kn_ui::web::files::WebEvent::HostRequest(req) => self.handle_host_request(&ctx, req),
                 }
             }
             kn_ui::web::set_dirty(self.doc().is_some_and(|d| d.dirty));

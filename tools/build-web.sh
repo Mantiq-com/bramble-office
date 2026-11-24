@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Build WebAssembly (browser) bundles for Keydeck, Values, and/or Letters using Trunk.
+# Build WebAssembly (browser) bundles for Keydeck, Values and Letters using Trunk.
 #
 # Usage:
 #   ./tools/build-web.sh                       # build all three into dist/web/{keydeck,values,letters}
 #   ./tools/build-web.sh keydeck values        # build selected app(s)
 #   ./tools/build-web.sh --package             # build all three and create release archives in dist/
+#   ./tools/build-web.sh --package-tag v0.5.2
+#                                              # build and pack single-root tarballs:
+#                                              #   dist/{keydeck,values,letters}-web-<tag>.tar.gz
 #   ./tools/build-web.sh letters --package     # build and package Letters only
 set -euo pipefail
 
@@ -12,18 +15,36 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 PACKAGE=0
+PACKAGE_TAG=""
 APPS=()
-for arg in "$@"; do
+while [ $# -gt 0 ]; do
+  arg="$1"
+  shift
   case "$arg" in
     --package) PACKAGE=1 ;;
+    --package-tag)
+      if [ $# -eq 0 ] || [ -z "$1" ]; then
+        echo "error: --package-tag requires a release tag (e.g. v0.5.2)" >&2
+        exit 2
+      fi
+      PACKAGE_TAG="$1"
+      shift
+      ;;
+    --package-tag=*)
+      PACKAGE_TAG="${arg#*=}"
+      if [ -z "$PACKAGE_TAG" ]; then
+        echo "error: --package-tag requires a non-empty release tag" >&2
+        exit 2
+      fi
+      ;;
     keydeck|values|letters) APPS+=("$arg") ;;
     all) APPS=(keydeck values letters) ;;
     -h|--help)
-      sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
-      echo "Unknown argument: $arg (expected keydeck, values, letters, all, or --package)" >&2
+      echo "Unknown argument: $arg (expected keydeck, values, letters, all, --package, or --package-tag <tag>)" >&2
       exit 2
       ;;
   esac
@@ -50,6 +71,20 @@ build_app() {
   (cd "$ROOT/$crate_dir" && trunk build --release)
   rm -f "$ROOT/dist/web/$app/.trunk-lock"
   cp "$ROOT/LICENSE" "$ROOT/dist/web/$app/LICENSE"
+  case "$app" in
+    keydeck)
+      cargo run --manifest-path "$ROOT/keynote-linux/Cargo.toml" \
+        --package kn-model --example blankdoc -- \
+        "$ROOT/keynote-linux/crates/kn-app/data/themes/White.key" \
+        "$ROOT/dist/web/keydeck/blank.key"
+      ;;
+    values)
+      cp "$ROOT/numbers-linux/crates/nm-core/data/Blank.numbers" "$ROOT/dist/web/values/blank.numbers"
+      ;;
+    letters)
+      cp "$ROOT/pages-linux/crates/pg-core/data/Blank.pages" "$ROOT/dist/web/letters/blank.pages"
+      ;;
+  esac
 }
 
 zip_dir() {
@@ -111,4 +146,26 @@ if [ "$PACKAGE" -eq 1 ]; then
     tar -C "$stage" -czf "$ROOT/dist/Bramble-Office-web.tar.gz" bramble-office-web
     echo "  dist/Bramble-Office-web.tar.gz ($(du -sh "$ROOT/dist/Bramble-Office-web.tar.gz" | cut -f1))"
   fi
+fi
+
+if [ -n "$PACKAGE_TAG" ]; then
+  echo ""
+  echo "==> Packaging single-root host bundles for tag '${PACKAGE_TAG}' in dist/"
+  stage_tag="$(mktemp -d)"
+  trap 'rm -rf "$stage_tag"' EXIT
+  tarballs=()
+  for app in "${APPS[@]}"; do
+    dir_name="${app}-web-${PACKAGE_TAG}"
+    out_tar="$ROOT/dist/${dir_name}.tar.gz"
+    rm -rf "$stage_tag/$dir_name" "$out_tar"
+    mkdir -p "$stage_tag/$dir_name"
+    cp -R "$ROOT/dist/web/$app/." "$stage_tag/$dir_name/"
+    rm -f "$stage_tag/$dir_name/.trunk-lock"
+    tar --create --gzip --file "$out_tar" --directory "$stage_tag" "$dir_name"
+    tarballs+=("$out_tar")
+    echo "  dist/${dir_name}.tar.gz ($(du -sh "$out_tar" | cut -f1))"
+  done
+  echo ""
+  echo "==> SHA-256 checksums:"
+  sha256sum "${tarballs[@]}"
 fi

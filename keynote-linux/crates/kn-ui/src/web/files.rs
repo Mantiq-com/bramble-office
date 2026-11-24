@@ -21,6 +21,8 @@ pub enum WebEvent {
     Dropped { name: String, bytes: Vec<u8> },
     /// Picture pasted from the browser clipboard (`paste` event).
     PastedImage { name: String, bytes: Vec<u8> },
+    /// Control-protocol request from a `?host=parent` iframe host (`<app>:request`).
+    HostRequest(super::host::HostRequest),
 }
 
 /// Open the browser's file picker (`<input type="file">`) and invoke `on_files` with all chosen

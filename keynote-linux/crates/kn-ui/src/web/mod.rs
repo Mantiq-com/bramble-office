@@ -102,6 +102,15 @@ mod runtime {
         });
     }
 
+    /// Reply to a `?host=parent` `<prefix>:request` message.
+    pub fn respond_host(id: &serde_json::Value, res: Result<serde_json::Value, host::HostError>) {
+        BRIDGE.with(|b| {
+            if let Some(bridge) = b.borrow().as_ref() {
+                bridge.post_response(id, res);
+            }
+        });
+    }
+
     /// Open a URL in a new browser tab (`noopener`).
     pub fn open_url(url: &str) {
         if let Some(window) = web_sys::window() {

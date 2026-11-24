@@ -846,6 +846,36 @@ fn write_pdf(job: &Job) -> Result<(), String> {
     std::fs::write(&job.path, pdf_bytes(job)).map_err(|e| e.to_string())
 }
 
+/// Render every non-skipped slide of `doc` into an in-memory PDF (1920 px wide, matching headless
+/// PDF export). Used by the `?host=parent` web bridge for `file.saveAs` PDF exports.
+#[cfg(target_arch = "wasm32")]
+pub fn pdf_bytes_for_doc(doc: &kn_model::Document, r: &mut kn_render::Renderer) -> Result<Vec<u8>, String> {
+    let slides = doc.slides();
+    let size = doc.slide_size();
+    let mut job = Job {
+        format: Format::Pdf,
+        path: PathBuf::from("export.pdf"),
+        indices: (0..slides.len()).filter(|i| !slides[*i].skipped).collect(),
+        next: 0,
+        width: 1920,
+        pages: Vec::new(),
+        page_size: (size.w, size.h),
+        stem: String::new(),
+        frames: None,
+        seconds: 0.0,
+        texts: Vec::new(),
+        web_images: Vec::new(),
+    };
+    for k in 0..job.indices.len() {
+        let i = job.indices[k];
+        let sc = doc.scene(&slides, i).ok_or("scene")?;
+        let pm = r.render_scene(doc, &sc, job.width).ok_or("render")?;
+        job.next = k;
+        write_slide(&mut job, &pm)?;
+    }
+    Ok(pdf_bytes(&job))
+}
+
 /// Headless export for tests and the command line: `kn-app --export-pdf in.key out.pdf`.
 pub fn export_pdf_headless(input: &std::path::Path, output: &std::path::Path) -> Result<usize, String> {
     export_headless(input, output, Format::Pdf, 1920, 0.0)
